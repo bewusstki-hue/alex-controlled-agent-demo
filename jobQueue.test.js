@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { claimNextJob, listJobs, seedJobs, setStorePath } from './jobQueue.js';
+import { claimNextJob, isValidPriority, listJobs, seedJobs, setStorePath } from './jobQueue.js';
 
 function freshStore() {
   const dir = mkdtempSync(path.join(tmpdir(), 'jobqueue-test-'));
@@ -32,4 +32,14 @@ test('claimNextJob ueberspringt bereits reservierte Jobs', async () => {
   seedJobs([{ id: 'j1', status: 'reserved' }, { id: 'j2', status: 'open' }]);
   const claimed = await claimNextJob('worker-b');
   assert.equal(claimed, 'j2');
+});
+
+test('isValidPriority akzeptiert nur high, normal und low', () => {
+  assert.equal(isValidPriority('high'), true);
+  assert.equal(isValidPriority('normal'), true);
+  assert.equal(isValidPriority('low'), true);
+  assert.equal(isValidPriority('urgent'), false);
+  assert.equal(isValidPriority(''), false);
+  assert.equal(isValidPriority(undefined), false);
+  assert.equal(isValidPriority(null), false);
 });

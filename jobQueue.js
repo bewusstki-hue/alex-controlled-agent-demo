@@ -53,3 +53,12 @@ export async function claimNextJob(workerId) {
 export async function listJobs() {
   return loadJobs();
 }
+
+/**
+ * Prueft, ob priority ein gueltiger Job-Prioritaetswert ist.
+ * Akzeptiert nur 'high', 'normal' und 'low'; alles andere (inkl. undefined/null)
+ * liefert false.
+ */
+export function isValidPriority(priority) {
+  return priority === 'high' || priority === 'normal' || priority === 'low';
+}
