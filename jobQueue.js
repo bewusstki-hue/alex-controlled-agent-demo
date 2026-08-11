@@ -10,11 +10,35 @@ import { existsSync, writeFileSync } from 'node:fs';
 
 let dbPath = new URL('./jobs.store.json', import.meta.url).pathname;
 
+/** Erlaubte Prioritaeten, sortiert von hoechster zu niedrigster Prioritaet. */
+export const PRIORITIES = ['high', 'normal', 'low'];
+
+const PRIORITY_RANK = { high: 0, normal: 1, low: 2 };
+const DEFAULT_PRIORITY = 'normal';
+
 export function setStorePath(p) {
   dbPath = p;
 }
 
+/**
+ * Normalisiert die Prioritaet eines Jobs. Jobs ohne Prioritaetsangabe gelten als 'normal'.
+ * Ungueltige Prioritaeten werden abgelehnt (wirft einen Fehler).
+ */
+export function normalizePriority(priority) {
+  if (priority === undefined || priority === null) return DEFAULT_PRIORITY;
+  if (!(priority in PRIORITY_RANK)) {
+    throw new Error(
+      `Ungueltige Prioritaet: ${JSON.stringify(priority)} (erlaubt: ${PRIORITIES.join(', ')})`,
+    );
+  }
+  return priority;
+}
+
 export function seedJobs(jobs) {
+  // Ungueltige Prioritaeten schon beim Einfuegen ablehnen.
+  for (const job of jobs) {
+    normalizePriority(job.priority);
+  }
   writeFileSync(dbPath, JSON.stringify(jobs, null, 2));
 }
 
@@ -33,8 +57,11 @@ async function saveJobs(jobs) {
 }
 
 /**
- * Reserviert den naechsten offenen Job fuer workerId. Gibt die Job-ID zurueck, oder null
- * wenn kein offener Job mehr vorhanden ist.
+ * Reserviert fuer workerId den aeltesten offenen Job der hoechsten verfuegbaren
+ * Prioritaet (high > normal > low). Bei gleicher Prioritaet gilt FIFO (Reihenfolge
+ * im Store = Einfuege-Reihenfolge). Gibt die Job-ID zurueck, oder null wenn kein
+ * offener Job mehr vorhanden ist. Offene Jobs mit ungueltiger Prioritaet werden
+ * abgelehnt (wirft einen Fehler).
  *
  * BEKANNTER FEHLER: liest den Zustand, wartet auf I/O, schreibt danach zurueck -- zwei
  * gleichzeitige Aufrufe koennen beide denselben Job als "offen" lesen, bevor einer von
@@ -42,12 +69,23 @@ async function saveJobs(jobs) {
  */
 export async function claimNextJob(workerId) {
   const jobs = await loadJobs();
-  const next = jobs.find((j) => j.status === 'open');
-  if (!next) return null;
-  next.status = 'reserved';
-  next.workerId = workerId;
+  let best = null;
+  let bestRank = Infinity;
+  // In Store-Reihenfolge (aelteste zuerst) iterieren; nur bei echt hoeherer Prioritaet
+  // wechseln, dadurch bleibt innerhalb derselben Prioritaet FIFO erhalten.
+  for (const job of jobs) {
+    if (job.status !== 'open') continue;
+    const rank = PRIORITY_RANK[normalizePriority(job.priority)];
+    if (rank < bestRank) {
+      best = job;
+      bestRank = rank;
+    }
+  }
+  if (!best) return null;
+  best.status = 'reserved';
+  best.workerId = workerId;
   await saveJobs(jobs);
-  return next.id;
+  return best.id;
 }
 
 export async function listJobs() {
