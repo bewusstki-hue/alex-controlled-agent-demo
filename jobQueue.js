@@ -32,9 +32,21 @@ async function saveJobs(jobs) {
   await writeFile(dbPath, JSON.stringify(jobs, null, 2));
 }
 
+/** Rangordnung der Prioritaeten: high > normal > low. Jobs ohne Feld gelten als 'normal'. */
+const PRIORITY_RANK = { high: 3, normal: 2, low: 1 };
+
+export function priorityRank(priority) {
+  return PRIORITY_RANK[priority] ?? PRIORITY_RANK.normal;
+}
+
 /**
  * Reserviert den naechsten offenen Job fuer workerId. Gibt die Job-ID zurueck, oder null
  * wenn kein offener Job mehr vorhanden ist.
+ *
+ * Reihenfolge: zuerst der Job mit der hoechsten Prioritaet (high > normal > low), bei
+ * gleicher Prioritaet der aelteste -- die Einreihungsreihenfolge (Array-Index) ist das
+ * Alter eines Jobs, da neue Jobs hinten angehaengt werden und reservierte nie entfernt
+ * werden.
  *
  * BEKANNTER FEHLER: liest den Zustand, wartet auf I/O, schreibt danach zurueck -- zwei
  * gleichzeitige Aufrufe koennen beide denselben Job als "offen" lesen, bevor einer von
@@ -42,12 +54,19 @@ async function saveJobs(jobs) {
  */
 export async function claimNextJob(workerId) {
   const jobs = await loadJobs();
-  const next = jobs.find((j) => j.status === 'open');
+  const next = jobs
+    .map((job, index) => ({ job, index }))
+    .filter(({ job }) => job.status === 'open')
+    .sort((a, b) => {
+      const prioDiff = priorityRank(b.job.priority) - priorityRank(a.job.priority);
+      if (prioDiff !== 0) return prioDiff;
+      return a.index - b.index; // gleiche Prioritaet: aelterer Job zuerst
+    })[0];
   if (!next) return null;
-  next.status = 'reserved';
-  next.workerId = workerId;
+  next.job.status = 'reserved';
+  next.job.workerId = workerId;
   await saveJobs(jobs);
-  return next.id;
+  return next.job.id;
 }
 
 export async function listJobs() {
