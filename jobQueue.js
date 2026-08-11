@@ -40,6 +40,14 @@ export function priorityRank(priority) {
 }
 
 /**
+ * Prueft, ob ein priority-Wert gueltig ist. Erlaubt sind ausschliesslich 'high',
+ * 'normal' und 'low' sowie undefined/null (gelten als 'normal').
+ */
+export function isValidPriority(priority) {
+  return priority == null || PRIORITY_RANK[priority] !== undefined;
+}
+
+/**
  * Reserviert den naechsten offenen Job fuer workerId. Gibt die Job-ID zurueck, oder null
  * wenn kein offener Job mehr vorhanden ist.
  *
@@ -54,6 +62,17 @@ export function priorityRank(priority) {
  */
 export async function claimNextJob(workerId) {
   const jobs = await loadJobs();
+
+  // Validierung: Ein offener Job mit ungueltigem priority-Wert ist ein Datenfehler und
+  // wird nicht stillschweigend wie 'normal' behandelt, sondern mit einem Fehler abgelehnt.
+  const invalid = jobs.find((job) => job.status === 'open' && !isValidPriority(job.priority));
+  if (invalid) {
+    throw new Error(
+      `Ungültiger priority-Wert ${JSON.stringify(invalid.priority)} bei Job "${invalid.id}". ` +
+        `Erlaubt sind 'high', 'normal', 'low' oder ein fehlender Wert (= 'normal').`
+    );
+  }
+
   const next = jobs
     .map((job, index) => ({ job, index }))
     .filter(({ job }) => job.status === 'open')

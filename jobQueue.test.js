@@ -68,3 +68,41 @@ test('claimNextJob reserviert in Reihenfolge: hoechste Prio, dann aeltester', as
   for (let i = 0; i < 5; i++) order.push(await claimNextJob('worker-a'));
   assert.deepEqual(order, ['h1', 'h2', 'n1', 'n2', 'l1']);
 });
+
+test('claimNextJob akzeptiert alle gueltigen Prioritaeten weiterhin korrekt', async () => {
+  freshStore();
+  seedJobs([
+    { id: 'l1', status: 'open', priority: 'low' },
+    { id: 'h1', status: 'open', priority: 'high' },
+    { id: 'n1', status: 'open', priority: 'normal' },
+  ]);
+  const order = [];
+  for (let i = 0; i < 3; i++) order.push(await claimNextJob('worker-a'));
+  assert.deepEqual(order, ['h1', 'n1', 'l1']);
+});
+
+test('claimNextJob behandelt fehlenden priority-Wert weiterhin als normal', async () => {
+  freshStore();
+  seedJobs([
+    { id: 'no-prio', status: 'open' },
+    { id: 'low1', status: 'open', priority: 'low' },
+  ]);
+  const claimed = await claimNextJob('worker-a');
+  assert.equal(claimed, 'no-prio');
+});
+
+test('claimNextJob wirft einen Fehler bei ungueltigem priority-Wert eines offenen Jobs', async () => {
+  freshStore();
+  seedJobs([
+    { id: 'ok', status: 'open', priority: 'high' },
+    { id: 'bad', status: 'open', priority: 'urgent' },
+  ]);
+  await assert.rejects(() => claimNextJob('worker-a'), /Ungültiger priority-Wert "urgent"/);
+});
+
+test('claimNextJob ignoriert ungueltige Prioritaet bei nicht-offenen Jobs', async () => {
+  freshStore();
+  seedJobs([{ id: 'bad', status: 'reserved', priority: 'urgent' }]);
+  const claimed = await claimNextJob('worker-a');
+  assert.equal(claimed, null);
+});
