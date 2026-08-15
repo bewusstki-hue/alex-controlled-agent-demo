@@ -44,18 +44,60 @@ export function seedJobs(jobs) {
   writeFileSync(dbPath, JSON.stringify(jobs, null, 2));
 }
 
+/**
+ * Liest die Store-Datei und gibt die Job-Liste als Array zurueck. Lesefehler, eine
+ * kaputte/leere Datei oder ein ungueltiges Format (kein JSON-Array) werden in eine
+ * aussagekraeftige Fehlermeldung mit Dateipfad uebersetzt, statt als roher
+ * Dateisystem-/Parse-Fehler durchzuschlagen.
+ */
 async function loadJobs() {
   if (!existsSync(dbPath)) return [];
-  const raw = await readFile(dbPath, 'utf-8');
+  let raw;
+  try {
+    raw = await readFile(dbPath, 'utf-8');
+  } catch (err) {
+    throw new Error(`Store-Datei "${dbPath}" konnte nicht gelesen werden: ${err.message}`);
+  }
   // Simulierte Speicher-Latenz (wie bei einer echten DB-Anfrage ueber das Netzwerk) --
   // macht das Race-Fenster zuverlaessig reproduzierbar statt nur gelegentlich unter Last
   // aufzutreten.
   await new Promise((resolve) => setTimeout(resolve, 15));
-  return JSON.parse(raw);
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    if (raw.trim() === '') {
+      throw new Error(
+        `Store-Datei "${dbPath}" ist leer -- der Job-Queue-Speicher ist beschädigt. ` +
+          `Bitte mit seedJobs() neu initialisieren.`
+      );
+    }
+    throw new Error(
+      `Store-Datei "${dbPath}" enthält kein gültiges JSON: ${err.message}. ` +
+        `Bitte Datei prüfen oder mit seedJobs() neu initialisieren.`
+    );
+  }
+  if (!Array.isArray(parsed)) {
+    throw new Error(
+      `Store-Datei "${dbPath}" enthält kein JSON-Array (gefunden: ${typeof parsed}). ` +
+        `Bitte Datei prüfen oder mit seedJobs() neu initialisieren.`
+    );
+  }
+  return parsed;
 }
 
+/**
+ * Schreibt die Job-Liste in die Store-Datei. Fehler (z.B. fehlende Schreibrechte, voller
+ * Datentraeger) werden mit Dateipfad-Kontext weitergegeben, damit die Ursache nicht im
+ * rohen Dateisystem-Fehler untergeht.
+ */
 async function saveJobs(jobs) {
-  await writeFile(dbPath, JSON.stringify(jobs, null, 2));
+  try {
+    await writeFile(dbPath, JSON.stringify(jobs, null, 2));
+  } catch (err) {
+    throw new Error(`Store-Datei "${dbPath}" konnte nicht geschrieben werden: ${err.message}`);
+  }
 }
 
 /** Rangordnung der Prioritaeten: high > normal > low. Jobs ohne Feld gelten als 'normal'. */
@@ -89,6 +131,13 @@ export function isValidPriority(priority) {
  * Die FIFO-Sperre erhaelt die Prioritaets-/Alters-Reihenfolge.
  */
 export async function claimNextJob(workerId) {
+  // Fehlerbehandlung: Ein Job ohne gueltigen Besitzer ist ein Datenfehler -- sofort und
+  // klar ablehnen statt den Job stillschweigend mit einem ungueltigen workerId zu reservieren.
+  if (typeof workerId !== 'string' || workerId.trim() === '') {
+    throw new TypeError(
+      `workerId muss ein nicht-leerer String sein (erhalten: ${JSON.stringify(workerId)}).`
+    );
+  }
   return withJobQueueLock(async () => {
     const jobs = await loadJobs();
 
