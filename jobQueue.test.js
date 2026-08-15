@@ -106,3 +106,35 @@ test('claimNextJob ignoriert ungueltige Prioritaet bei nicht-offenen Jobs', asyn
   const claimed = await claimNextJob('worker-a');
   assert.equal(claimed, null);
 });
+
+test('claimNextJob vergibt keinen Job doppelt bei gleichzeitigen Aufrufen (Race-Condition-Fix)', async () => {
+  freshStore();
+  seedJobs([
+    { id: 'j1', status: 'open', priority: 'high' },
+    { id: 'j2', status: 'open', priority: 'normal' },
+    { id: 'j3', status: 'open', priority: 'normal' },
+    { id: 'j4', status: 'open', priority: 'low' },
+  ]);
+
+  // 6 parallele Aufrufe fuer 4 offene Jobs: Es duerfen exakt die 4 Jobs vergeben werden,
+  // die uebrigen 2 Aufrufe muessen null zurueckbekommen. Ohne den Fix haette sich das
+  // simulierte 15ms-I/O-Fenster ueberlagert und ein Job waere doppelt reserviert worden.
+  const workers = ['w1', 'w2', 'w3', 'w4', 'w5', 'w6'];
+  const results = await Promise.all(workers.map((w) => claimNextJob(w)));
+
+  const claimed = results.filter((r) => r !== null);
+  const nulls = results.filter((r) => r === null);
+
+  // Jeder verfuegbare Job wird hoechstens einmal vergeben und genau die 4 offenen Jobs
+  // werden vergeben -- keine Duplikate, keine verlorenen Jobs.
+  assert.equal(new Set(claimed).size, claimed.length, 'kein Job darf doppelt vergeben werden');
+  assert.deepEqual([...new Set(claimed)].sort(), ['j1', 'j2', 'j3', 'j4']);
+  assert.equal(nulls.length, 2);
+
+  // Die Reservierungen sind auch persistent: jeder vergebene Job ist genau einmal
+  // reserved, die restlichen zwei Aufrufe haben nichts reserviert.
+  const jobs = await listJobs();
+  const reserved = jobs.filter((j) => j.status === 'reserved');
+  assert.equal(reserved.length, 4);
+  assert.equal(new Set(reserved.map((j) => j.workerId)).size, 4);
+});
