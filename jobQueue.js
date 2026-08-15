@@ -10,6 +10,32 @@ import { existsSync, writeFileSync } from 'node:fs';
 
 let dbPath = new URL('./jobs.store.json', import.meta.url).pathname;
 
+/**
+ * In-Prozess-Mutex auf Basis einer Promise-Kette. Serialisiert den kritischen Abschnitt
+ * (Lesen + Reservieren + Schreiben) von claimNextJob(), damit zwei gleichzeitige Aufrufe
+ * nicht beide denselben offenen Job als "offen" lesen koennen. Die Warteschlange ist FIFO:
+ * Jeder neue Aufrufer haengt sich hinten an die Kette an -- dadurch bleibt die
+ * Prioritaets-/FIFO-Reihenfolge erhalten und es gibt weder Deadlock noch Starvation.
+ */
+let lockChain = Promise.resolve();
+
+async function withJobQueueLock(fn) {
+  // Aktuelle Kette abwarten und gleichzeitig die neue "Sperre" fuer den naechsten
+  // Aufrufer registrieren. release() wird genau einmal aufgerufen (finally) --
+  // kein Deadlock, auch wenn fn wirft.
+  const prev = lockChain;
+  let release;
+  lockChain = new Promise((resolve) => {
+    release = resolve;
+  });
+  await prev;
+  try {
+    return await fn();
+  } finally {
+    release();
+  }
+}
+
 export function setStorePath(p) {
   dbPath = p;
 }
@@ -56,36 +82,40 @@ export function isValidPriority(priority) {
  * Alter eines Jobs, da neue Jobs hinten angehaengt werden und reservierte nie entfernt
  * werden.
  *
- * BEKANNTER FEHLER: liest den Zustand, wartet auf I/O, schreibt danach zurueck -- zwei
- * gleichzeitige Aufrufe koennen beide denselben Job als "offen" lesen, bevor einer von
- * beiden seine Reservierung geschrieben hat.
+ * RACE-CONDITION-FIX: Lesen, Reservieren und Schreiben laufen atomar innerhalb von
+ * withJobQueueLock(). Der simulierte I/O in loadJobs() (15 ms) liegt damit im
+ * kritischen Abschnitt -- zwei gleichzeitige Aufrufe von claimNextJob() koennen den
+ * Zustand nicht mehr parallel lesen, bevor einer seine Reservierung geschrieben hat.
+ * Die FIFO-Sperre erhaelt die Prioritaets-/Alters-Reihenfolge.
  */
 export async function claimNextJob(workerId) {
-  const jobs = await loadJobs();
+  return withJobQueueLock(async () => {
+    const jobs = await loadJobs();
 
-  // Validierung: Ein offener Job mit ungueltigem priority-Wert ist ein Datenfehler und
-  // wird nicht stillschweigend wie 'normal' behandelt, sondern mit einem Fehler abgelehnt.
-  const invalid = jobs.find((job) => job.status === 'open' && !isValidPriority(job.priority));
-  if (invalid) {
-    throw new Error(
-      `Ungültiger priority-Wert ${JSON.stringify(invalid.priority)} bei Job "${invalid.id}". ` +
-        `Erlaubt sind 'high', 'normal', 'low' oder ein fehlender Wert (= 'normal').`
-    );
-  }
+    // Validierung: Ein offener Job mit ungueltigem priority-Wert ist ein Datenfehler und
+    // wird nicht stillschweigend wie 'normal' behandelt, sondern mit einem Fehler abgelehnt.
+    const invalid = jobs.find((job) => job.status === 'open' && !isValidPriority(job.priority));
+    if (invalid) {
+      throw new Error(
+        `Ungültiger priority-Wert ${JSON.stringify(invalid.priority)} bei Job "${invalid.id}". ` +
+          `Erlaubt sind 'high', 'normal', 'low' oder ein fehlender Wert (= 'normal').`
+      );
+    }
 
-  const next = jobs
-    .map((job, index) => ({ job, index }))
-    .filter(({ job }) => job.status === 'open')
-    .sort((a, b) => {
-      const prioDiff = priorityRank(b.job.priority) - priorityRank(a.job.priority);
-      if (prioDiff !== 0) return prioDiff;
-      return a.index - b.index; // gleiche Prioritaet: aelterer Job zuerst
-    })[0];
-  if (!next) return null;
-  next.job.status = 'reserved';
-  next.job.workerId = workerId;
-  await saveJobs(jobs);
-  return next.job.id;
+    const next = jobs
+      .map((job, index) => ({ job, index }))
+      .filter(({ job }) => job.status === 'open')
+      .sort((a, b) => {
+        const prioDiff = priorityRank(b.job.priority) - priorityRank(a.job.priority);
+        if (prioDiff !== 0) return prioDiff;
+        return a.index - b.index; // gleiche Prioritaet: aelterer Job zuerst
+      })[0];
+    if (!next) return null;
+    next.job.status = 'reserved';
+    next.job.workerId = workerId;
+    await saveJobs(jobs);
+    return next.job.id;
+  });
 }
 
 export async function listJobs() {
