@@ -116,13 +116,41 @@ export function isValidPriority(priority) {
 }
 
 /**
+ * Vergleicht zwei offene Jobs fuer die Vergabe-Reihenfolge in claimNextJob().
+ *
+ * Die Anforderung ist zweistufig und muss beide Teile gleichzeitig erfuellen:
+ *
+ *  1. Prioritaet zuerst: Der Job mit der hoechsten Prioritaet (high > normal > low)
+ *     wird IMMER vor jedem aelteren Job mit niedrigerer Prioritaet vergeben. Die
+ *     Prioritaet hat also Vorrang vor dem Alter.
+ *  2. Striktes FIFO innerhalb derselben Prioritaetsklasse: Dort kommt der aelteste
+ *     offene Job zuerst -- die Einreihungsreihenfolge (Array-Index) ist das Alter,
+ *     da neue Jobs hinten angehaengt und reservierte nie entfernt werden. Die
+ *     Prioritaet darf die FIFO-Reihenfolge innerhalb einer Klasse NICHT veraendern.
+ *
+ * Ergebnis: 'high' vor 'low' (Punkt 1) UND innerhalb z.B. aller 'high'-Jobs strikt
+ * aeltester-zuerst (Punkt 2) -- beides gleichzeitig, ohne Kompromiss.
+ */
+function byPriorityThenFifo(a, b) {
+  // Absteigend nach Prioritaet: high(3) > normal(2) > low(1). b - a bringt den
+  // hoeheren Rang nach vorn -- 'high' kommt dadurch IMMER vor jedem 'low'-Job.
+  const prioDiff = priorityRank(b.job.priority) - priorityRank(a.job.priority);
+  if (prioDiff !== 0) return prioDiff;
+  // Gleiche Prioritaet: striktes FIFO -- der aeltere Job (kleinerer Array-Index,
+  // d.h. frueher eingereiht) wird zuerst vergeben. So bleibt die FIFO-Reihenfolge
+  // innerhalb der Prioritaetsklasse vollstaendig erhalten.
+  return a.index - b.index;
+}
+
+/**
  * Reserviert den naechsten offenen Job fuer workerId. Gibt die Job-ID zurueck, oder null
  * wenn kein offener Job mehr vorhanden ist.
  *
- * Reihenfolge: zuerst der Job mit der hoechsten Prioritaet (high > normal > low), bei
- * gleicher Prioritaet der aelteste -- die Einreihungsreihenfolge (Array-Index) ist das
- * Alter eines Jobs, da neue Jobs hinten angehaengt werden und reservierte nie entfernt
- * werden.
+ * Reihenfolge: striktes FIFO innerhalb jeder Prioritaetsklasse -- der aelteste offene
+ * Job einer Prioritaet kommt zuerst, und ein Job mit hoher Prioritaet wird trotzdem
+ * immer vor einem aelteren Job mit niedriger Prioritaet vergeben (siehe
+ * byPriorityThenFifo). Die Prioritaet aendert dabei niemals die FIFO-Reihenfolge
+ * innerhalb derselben Prioritaetsklasse.
  *
  * RACE-CONDITION-FIX: Lesen, Reservieren und Schreiben laufen atomar innerhalb von
  * withJobQueueLock(). Der simulierte I/O in loadJobs() (15 ms) liegt damit im
@@ -154,13 +182,7 @@ export async function claimNextJob(workerId) {
     const next = jobs
       .map((job, index) => ({ job, index }))
       .filter(({ job }) => job.status === 'open')
-      .sort((a, b) => {
-        // Absteigend nach Prioritaet: high(3) > normal(2) > low(1). Der Vergleich
-        // b - a sortiert den hoeheren Rang nach vorn, d.h. 'high' kommt IMMER vor 'low'.
-        const prioDiff = priorityRank(b.job.priority) - priorityRank(a.job.priority);
-        if (prioDiff !== 0) return prioDiff;
-        return a.index - b.index; // gleiche Prioritaet: aelterer Job zuerst
-      })[0];
+      .sort(byPriorityThenFifo)[0];
     if (!next) return null;
     next.job.status = 'reserved';
     next.job.workerId = workerId;
