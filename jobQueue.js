@@ -155,6 +155,8 @@ export async function claimNextJob(workerId) {
       .map((job, index) => ({ job, index }))
       .filter(({ job }) => job.status === 'open')
       .sort((a, b) => {
+        // Absteigend nach Prioritaet: high(3) > normal(2) > low(1). Der Vergleich
+        // b - a sortiert den hoeheren Rang nach vorn, d.h. 'high' kommt IMMER vor 'low'.
         const prioDiff = priorityRank(b.job.priority) - priorityRank(a.job.priority);
         if (prioDiff !== 0) return prioDiff;
         return a.index - b.index; // gleiche Prioritaet: aelterer Job zuerst
