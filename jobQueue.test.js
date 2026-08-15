@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { claimNextJob, listJobs, seedJobs, setStorePath } from './jobQueue.js';
@@ -137,4 +137,44 @@ test('claimNextJob vergibt keinen Job doppelt bei gleichzeitigen Aufrufen (Race-
   const reserved = jobs.filter((j) => j.status === 'reserved');
   assert.equal(reserved.length, 4);
   assert.equal(new Set(reserved.map((j) => j.workerId)).size, 4);
+});
+
+// --- Neue Fehlerpfade aus PR #10 ---
+
+// Schreibt den Store-Pfad auf ein frisches tmp-Verzeichnis und legt die Store-Datei
+// direkt mit rohem Inhalt an (statt ueber seedJobs), um kaputte/leere Dateien zu testen.
+function writeStore(rawContent) {
+  const dir = mkdtempSync(path.join(tmpdir(), 'jobqueue-test-'));
+  const storePath = path.join(dir, 'jobs.json');
+  setStorePath(storePath);
+  writeFileSync(storePath, rawContent);
+}
+
+test('loadJobs wirft einen Fehler bei leerer Store-Datei', async () => {
+  writeStore('');
+  await assert.rejects(() => listJobs(), /ist leer/);
+});
+
+test('loadJobs wirft einen Fehler bei kaputter Store-Datei (kein gueltiges JSON)', async () => {
+  writeStore('das ist kein json {{');
+  await assert.rejects(() => listJobs(), /kein gültiges JSON/);
+});
+
+test('loadJobs wirft einen Fehler bei gueltigem JSON, das kein Array ist', async () => {
+  writeStore('{"status": "kein array"}');
+  await assert.rejects(() => listJobs(), /kein JSON-Array/);
+});
+
+test('claimNextJob wirft TypeError bei nicht-String workerId', async () => {
+  freshStore();
+  await assert.rejects(() => claimNextJob(123), TypeError);
+  await assert.rejects(() => claimNextJob(123), /muss ein nicht-leerer String sein/);
+  await assert.rejects(() => claimNextJob(null), TypeError);
+});
+
+test('claimNextJob wirft TypeError bei leerer oder Whitespace-workerId', async () => {
+  freshStore();
+  await assert.rejects(() => claimNextJob(''), TypeError);
+  await assert.rejects(() => claimNextJob('   '), TypeError);
+  await assert.rejects(() => claimNextJob(''), /muss ein nicht-leerer String sein/);
 });
