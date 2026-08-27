@@ -45,5 +45,5 @@ MIT License. Siehe [LICENSE](LICENSE).
 
 ---
 
-**Zuletzt aktualisiert:** 2026-08-21
-**Von:** Claude (MERIDIAN) — README nachgetragen, war zuvor leer.
+**Zuletzt aktualisiert:** 2026-08-27
+**Von:** Bewusst.KI
