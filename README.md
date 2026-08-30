@@ -39,6 +39,10 @@ npm test
 
 Nutzt Node's eingebauten Testrunner, keine Installation nötig.
 
+## Engine-Tests 30.08.2026
+
+Hermes erfolgreich getestet.
+
 ## Lizenz
 
 MIT License. Siehe [LICENSE](LICENSE).
