@@ -47,3 +47,4 @@ MIT License. Siehe [LICENSE](LICENSE).
 
 **Zuletzt aktualisiert:** 2026-08-27
 **Von:** Bewusst.KI
+Evidence full-diff live test 2026-08-30. Ke
