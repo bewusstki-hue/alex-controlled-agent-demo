@@ -33,6 +33,8 @@ eine echte Job-Queue wäre eine Datenbank-Transaktion oder ein verteilter Lock n
 
 ## Tests
 
+1 Test ist absichtlich rot: `discount.js` ist falsch, der bestehende Test ist korrekt.
+
 ```bash
 npm test
 ```
@@ -45,5 +47,5 @@ MIT License. Siehe [LICENSE](LICENSE).
 
 ---
 
-**Zuletzt aktualisiert:** 2026-08-27
-**Von:** Bewusst.KI
+**Zuletzt aktualisiert:** 2026-08-31
+**Von:** MERIDIAN
