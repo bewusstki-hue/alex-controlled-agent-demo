@@ -52,3 +52,19 @@ export function clampValue(value, min, max) {
   }
   return Math.min(Math.max(value, min), max);
 }
+
+/**
+ * clampPercentage(value) -- begrenzt einen Wert auf den Prozentbereich [0, 100].
+ *
+ * Konvenienzfunktion auf Basis von clampValue: delegiert die gesamte Logik
+ * (inkl. Grenzpruefung, NaN- und Typpruefung sowie die Fehler bei min > max)
+ * an clampValue(value, 0, 100). Ein Wert unter 0 wird auf 0 gekappt, ein Wert
+ * ueber 100 auf 100, Werte dazwischen bleiben unveraendert.
+ *
+ * @param {number} value Der zu begrenzende Wert.
+ * @returns {number} value begrenzt auf das Intervall [0, 100].
+ * @throws {TypeError} Wenn value keine Zahl ist (oder NaN) -- von clampValue.
+ */
+export function clampPercentage(value) {
+  return clampValue(value, 0, 100);
+}
