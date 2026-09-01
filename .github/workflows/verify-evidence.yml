@@ -32,9 +32,17 @@ jobs:
               core.setFailed('Marker nicht gefunden oder in falscher Reihenfolge.');
               return;
             }
-            let between = body.slice(begin + '<!-- ALEX-EVIDENCE-BEGIN -->'.length, end);
-            // Codeblock-Zaeune (```json / ```) entfernen, nicht Teil des JSON selbst.
-            between = between.replace(/```json/g, '').replace(/```/g, '').trim();
+            let between = body.slice(begin + '<!-- ALEX-EVIDENCE-BEGIN -->'.length, end).trim();
+            // Nur die aeusseren Markdown-Zaeune entfernen. Globale Backtick-Ersetzung wuerde
+            // signierte diff_full-Inhalte (z.B. README-Codeblocks) veraendern.
+            const openingFence = '```json';
+            const closingFence = '```';
+            if (!between.startsWith(openingFence) || !between.endsWith(closingFence)) {
+              core.setFailed('Bundle-Codeblock fehlt oder hat ein unerwartetes Format.');
+              return;
+            }
+            between = between.slice(openingFence.length, -closingFence.length)
+              .replace(/^\r?\n/, '').replace(/\r?\n$/, '');
             try {
               JSON.parse(between);
             } catch (e) {
