@@ -1,0 +1,89 @@
+name: ALEX Evidence
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  checks: write
+  pull-requests: read
+
+jobs:
+  verify:
+    # Nur PR-Kommentare vom ALEX-App-Bot, die das Marker-Paar tragen. Das ist Hygiene, nicht die
+    # eigentliche Sicherheitsgrenze -- die ist die Ed25519-Signatur/Trust-Anchor-Pruefung in
+    # verify.js selbst; ein gefaelschter Kommentar von irgendjemand anderem faellt dort durch
+    # (untrusted_signer/invalid_signature), egal ob dieser Filter ihn vorher schon aussortiert.
+    if: >
+      github.event.issue.pull_request &&
+      github.event.comment.user.login == 'alex-autonom[bot]' &&
+      contains(github.event.comment.body, 'ALEX-EVIDENCE-BEGIN')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Extract bundle JSON from comment
+        id: extract
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.comment.body;
+            const begin = body.indexOf('<!-- ALEX-EVIDENCE-BEGIN -->');
+            const end = body.indexOf('<!-- ALEX-EVIDENCE-END -->');
+            if (begin === -1 || end === -1 || end < begin) {
+              core.setFailed('Marker nicht gefunden oder in falscher Reihenfolge.');
+              return;
+            }
+            let between = body.slice(begin + '<!-- ALEX-EVIDENCE-BEGIN -->'.length, end);
+            // Codeblock-Zaeune (```json / ```) entfernen, nicht Teil des JSON selbst.
+            between = between.replace(/```json/g, '').replace(/```/g, '').trim();
+            try {
+              JSON.parse(between);
+            } catch (e) {
+              core.setFailed(`Bundle im Kommentar ist kein gueltiges JSON: ${e.message}`);
+              return;
+            }
+            core.setOutput('bundle_json', between);
+
+      - name: Resolve PR head SHA
+        id: pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.issue.number,
+            });
+            core.setOutput('head_sha', pr.data.head.sha);
+
+      - name: Verify bundle
+        id: verify
+        uses: bewusstki-hue/alex-mrtb-verify-bundle/.github/actions/verify@main
+        with:
+          bundle-json: ${{ steps.extract.outputs.bundle_json }}
+
+      - name: Publish Check Run
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const outcome = '${{ steps.verify.outputs.outcome }}';
+            const reason = '${{ steps.verify.outputs.reason }}';
+            const conclusion = outcome === 'verified' ? 'success' : outcome === 'inconclusive' ? 'neutral' : 'failure';
+            const titleByOutcome = {
+              verified: 'Evidence Bundle VERIFIED',
+              inconclusive: 'Evidence Bundle inconclusive (noch kein Endergebnis)',
+              failed: 'Evidence Bundle verification FAILED',
+            };
+            await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: 'ALEX Evidence (independent)',
+              head_sha: '${{ steps.pr.outputs.head_sha }}',
+              status: 'completed',
+              conclusion,
+              output: {
+                title: titleByOutcome[outcome] || 'Evidence Bundle check',
+                summary: reason
+                  ? `Unabhängig gegen den Well-known-Trust-Anchor geprüft (bewusstki-hue/alex-mrtb-verify-bundle). Ergebnis: **${outcome}** (${reason}).`
+                  : `Unabhängig gegen den Well-known-Trust-Anchor geprüft (bewusstki-hue/alex-mrtb-verify-bundle). Ergebnis: **${outcome}**.`,
+              },
+            });
